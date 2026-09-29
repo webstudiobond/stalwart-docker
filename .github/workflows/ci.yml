@@ -105,7 +105,7 @@ jobs:
         run: |
           cp .env.example .env
           mkdir -p secrets
-          for s in db_name db_password db_user stalwart_admin stalwart_recovery_user; do
+          for s in db_name db_password db_user recovery_user recovery_password; do
             touch "secrets/${s}.txt"
           done
 
