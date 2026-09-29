@@ -1,0 +1,229 @@
+name: stalwart
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-18-alpine}
+    container_name: stalwart-db
+    hostname: stalwart-db
+    restart: always
+    network_mode: "none"
+    user: "${APP_UID}:${APP_GID}"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add: []
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 150
+    mem_reservation: 256m
+    environment:
+      POSTGRES_DB_FILE: /run/secrets/db_name
+      POSTGRES_USER_FILE: /run/secrets/db_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    command:
+      - "postgres"
+      - "-c"
+      - "unix_socket_directories=/var/run/postgresql"
+      - "-c"
+      - "listen_addresses="
+    secrets:
+      - db_name
+      - db_user
+      - db_password
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$(cat /run/secrets/db_password)\" psql -U \"$$(cat /run/secrets/db_user)\" -d \"$$(cat /run/secrets/db_name)\" -h /var/run/postgresql -c 'select 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    tmpfs:
+      - /tmp:mode=1777,noexec,nosuid,nodev,size=64m
+    volumes:
+      - sockets:/var/run/postgresql
+      - ./postgres:/var/lib/postgresql:rw,noexec,nosuid,nodev
+      - /etc/localtime:/etc/localtime:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  valkey:
+    image: valkey/valkey:${VALKEY_VERSION:-9-alpine}
+    container_name: stalwart-cache
+    hostname: stalwart-cache
+    restart: always
+    user: "${APP_UID}:${APP_GID}"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add: []
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
+          pids: 30
+    mem_reservation: 96m
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-h", "127.0.0.1", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    tmpfs:
+      - /tmp:mode=1777,noexec,nosuid,nodev,size=64m
+    volumes:
+      - ./config/valkey/valkey.conf:/etc/valkey/valkey.conf:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - stalwart_internal
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  stalwart:
+    build:
+      context: .
+      target: server
+      args:
+        APP_UID: "${APP_UID}"
+        APP_GID: "${APP_GID}"
+    image: stalwart:dev
+    container_name: stalwart-mail
+    hostname: stalwart-mail
+    restart: always
+    user: "${APP_UID}:${APP_GID}"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1024m
+          pids: 100
+    mem_reservation: 256m
+    ports:
+      - "25:25"
+      - "465:465"
+      - "993:993"
+      # - "587:587"   # STARTTLS Submission (optional, implicit TLS on 465 is preferred)
+      # - "4190:4190" # ManageSieve (optional, for desktop client sieve rule filtering)
+    tmpfs:
+      - /tmp:mode=1777,noexec,nosuid,nodev,size=64m
+      - /run:mode=1777,noexec,nosuid,nodev,size=16m
+    volumes:
+      - sockets:/var/run/postgresql
+      - ./config/stalwart/config.json:/etc/stalwart/config.json:ro
+      - ./data:/var/lib/stalwart:rw,noexec,nosuid,nodev
+      - ./logs:/var/log/stalwart:rw,noexec,nosuid,nodev
+      - /etc/localtime:/etc/localtime:ro
+    secrets:
+      - db_name
+      - db_user
+      - db_password
+      - stalwart_recovery_user
+      - stalwart_admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/probe"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - stalwart_internal
+      - frontend_gateway
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  stalwart-cli:
+    build:
+      context: .
+      target: cli
+      args:
+        APP_UID: "${APP_UID}"
+        APP_GID: "${APP_GID}"
+    image: stalwart:dev-cli
+    container_name: stalwart-cli
+    hostname: stalwart-cli
+    profiles:
+      - tools
+    restart: "no"
+    user: "${APP_UID}:${APP_GID}"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add: []
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
+    mem_reservation: 64m
+    environment:
+      STALWART_URL: "http://stalwart:8080"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - stalwart_internal
+    depends_on:
+      stalwart:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
+secrets:
+  db_name:
+    file: ./secrets/db_name.txt
+  db_user:
+    file: ./secrets/db_user.txt
+  db_password:
+    file: ./secrets/db_password.txt
+  stalwart_recovery_user:
+    file: ./secrets/stalwart_recovery_user.txt
+  stalwart_admin:
+    file: ./secrets/stalwart_admin.txt
+
+volumes:
+  sockets:
+    name: stalwart_sockets
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m,mode=0700,uid=${APP_UID},gid=${APP_GID},noexec,nosuid,nodev"
+
+networks:
+  stalwart_internal:
+    name: stalwart_internal
+    internal: true
+  frontend_gateway:
+    external: true
