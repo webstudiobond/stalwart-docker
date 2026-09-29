@@ -137,8 +137,8 @@ services:
       - db_name
       - db_user
       - db_password
-      - recovery_user
-      - recovery_password
+      - stalwart_recovery_user
+      - stalwart_recovery_password
     depends_on:
       postgres:
         condition: service_healthy
@@ -207,10 +207,10 @@ secrets:
     file: ./secrets/db_user.txt
   db_password:
     file: ./secrets/db_password.txt
-  recovery_user:
-    file: ./secrets/recovery_user.txt
-  recovery_password:
-    file: ./secrets/recovery_password.txt
+  stalwart_recovery_user:
+    file: ./secrets/stalwart_recovery_user.txt
+  stalwart_recovery_password:
+    file: ./secrets/stalwart_recovery_password.txt
 
 volumes:
   sockets:

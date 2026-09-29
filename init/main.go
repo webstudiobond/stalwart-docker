@@ -13,9 +13,9 @@ import (
 	"strings"
 )
 
-const defaultRecoveryUserSecretPath = "/run/secrets/recovery_user"
+const defaultRecoveryUserSecretPath = "/run/secrets/stalwart_recovery_user"
 
-const defaultRecoveryPasswordSecretPath = "/run/secrets/recovery_password"
+const defaultRecoveryPasswordSecretPath = "/run/secrets/stalwart_recovery_password"
 
 const defaultSecretPath = defaultRecoveryPasswordSecretPath
 
