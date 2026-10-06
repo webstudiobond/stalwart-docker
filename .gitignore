@@ -17,4 +17,11 @@ go.work.sum
 
 *.md
 !README.md
+!DEVELOPMENT.md
 !.github/**/*.md
+
+data/
+secrets/
+postgres/
+logs/
+config/stalwart/

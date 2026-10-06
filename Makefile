@@ -16,8 +16,6 @@ coverage:
 vulncheck:
 	govulncheck ./...
 
-verify: check test vulncheck
-
 docker-lint:
 	hadolint Dockerfile
 
@@ -26,6 +24,8 @@ security-trivy:
 
 secrets-scan:
 	gitleaks detect --source . --no-git --no-color
+
+verify: check test vulncheck docker-lint security-trivy secrets-scan
 
 clean:
 	rm -rf coverage coverage.out

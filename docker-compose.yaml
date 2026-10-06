@@ -44,7 +44,7 @@ services:
     tmpfs:
       - /tmp:mode=1777,noexec,nosuid,nodev,size=64m
     volumes:
-      - sockets:/var/run/postgresql
+      - postgres_socket:/var/run/postgresql
       - ./postgres:/var/lib/postgresql:rw,noexec,nosuid,nodev
       - /etc/localtime:/etc/localtime:ro
     logging:
@@ -58,6 +58,7 @@ services:
     container_name: stalwart-cache
     hostname: stalwart-cache
     restart: always
+    network_mode: "none"
     user: "${APP_UID}:${APP_GID}"
     read_only: true
     cap_drop:
@@ -74,7 +75,7 @@ services:
     mem_reservation: 96m
     command: ["valkey-server", "/etc/valkey/valkey.conf"]
     healthcheck:
-      test: ["CMD", "valkey-cli", "-h", "127.0.0.1", "-p", "6379", "ping"]
+      test: ["CMD", "valkey-cli", "-s", "/var/run/valkey/valkey.sock", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -82,10 +83,9 @@ services:
     tmpfs:
       - /tmp:mode=1777,noexec,nosuid,nodev,size=64m
     volumes:
+      - valkey_socket:/var/run/valkey
       - ./config/valkey/valkey.conf:/etc/valkey/valkey.conf:ro
       - /etc/localtime:/etc/localtime:ro
-    networks:
-      - stalwart_internal
     logging:
       driver: json-file
       options:
@@ -117,12 +117,14 @@ services:
       - "465:465"
       - "993:993"
       # - "587:587"   # STARTTLS Submission (optional, implicit TLS on 465 is preferred)
-      # - "4190:4190" # ManageSieve (optional, for desktop client sieve rule filtering)
+      # - "127.0.0.1:4190:4190" # ManageSieve (optional, for desktop client sieve rule filtering)
+      # - "127.0.0.1:18080:8080"
     tmpfs:
       - /tmp:mode=1777,noexec,nosuid,nodev,size=64m
       - /run:mode=1777,noexec,nosuid,nodev,size=16m
     volumes:
-      - sockets:/var/run/postgresql
+      - postgres_socket:/var/run/postgresql
+      - valkey_socket:/var/run/valkey
       - ./config/stalwart/config.json:/etc/stalwart/config.json:ro
       - ./data:/var/lib/stalwart:rw,noexec,nosuid,nodev
       - ./logs:/var/log/stalwart:rw,noexec,nosuid,nodev
@@ -131,8 +133,12 @@ services:
       - db_name
       - db_user
       - db_password
-      - stalwart_recovery_user
-      - stalwart_recovery_password
+      # - cf_api_token
+      # - dkim_ed25519_key
+      # - dkim_rsa_key
+      ## https://stalw.art/docs/configuration/recovery-mode/#recovery-administrator
+      # - stalwart_recovery_user
+      # - stalwart_recovery_password
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,7 +151,6 @@ services:
       retries: 3
       start_period: 15s
     networks:
-      - stalwart_internal
       - frontend_gateway
     logging:
       driver: json-file
@@ -156,10 +161,10 @@ services:
   stalwart-cli:
     image: ghcr.io/webstudiobond/stalwart-docker:cli-${STALWART_CLI_VERSION:-latest}
     container_name: stalwart-cli
-    hostname: stalwart-cli
     profiles:
       - tools
     restart: "no"
+    network_mode: "service:stalwart"
     user: "${APP_UID}:${APP_GID}"
     read_only: true
     cap_drop:
@@ -174,11 +179,13 @@ services:
           memory: 128m
     mem_reservation: 64m
     environment:
-      STALWART_URL: "http://stalwart:8080"
+      STALWART_URL: "http://127.0.0.1:8080"
+      HOME: "/tmp"
+      XDG_CACHE_HOME: "/tmp"
+    tmpfs:
+      - /tmp:mode=1777,noexec,nosuid,nodev,size=16m
     volumes:
       - /etc/localtime:/etc/localtime:ro
-    networks:
-      - stalwart_internal
     depends_on:
       stalwart:
         condition: service_healthy
@@ -195,23 +202,34 @@ secrets:
     file: ./secrets/db_user.txt
   db_password:
     file: ./secrets/db_password.txt
-  stalwart_recovery_user:
-    file: ./secrets/stalwart_recovery_user.txt
-  stalwart_recovery_password:
-    file: ./secrets/stalwart_recovery_password.txt
+  # cf_api_token:
+  #   file: ./secrets/cf_api_token.txt
+  # dkim_ed25519_key:
+  #   file: ./secrets/dkim_ed25519.key
+  # dkim_rsa_key:
+  #   file: ./secrets/dkim_rsa.key
+  ## https://stalw.art/docs/configuration/recovery-mode/#recovery-administrator
+  # stalwart_recovery_user:
+  #   file: ./secrets/stalwart_recovery_user.txt
+  # stalwart_recovery_password:
+  #   file: ./secrets/stalwart_recovery_password.txt
 
 volumes:
-  sockets:
-    name: stalwart_sockets
+  postgres_socket:
+    name: stalwart_postgres_socket
     driver: local
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: "size=16m,mode=0700,uid=${APP_UID},gid=${APP_GID},noexec,nosuid,nodev"
+      o: "size=8m,mode=0700,uid=${APP_UID},gid=${APP_GID},noexec,nosuid,nodev"
+  valkey_socket:
+    name: stalwart_valkey_socket
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=8m,mode=0700,uid=${APP_UID},gid=${APP_GID},noexec,nosuid,nodev"
 
 networks:
-  stalwart_internal:
-    name: stalwart_internal
-    internal: true
   frontend_gateway:
     external: true

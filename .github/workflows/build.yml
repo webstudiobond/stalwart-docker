@@ -83,7 +83,7 @@ jobs:
           provenance: false
           labels: |
             org.opencontainers.image.title=Stalwart Mail Server
-            org.opencontainers.image.description=Hardened, zero-shell Stalwart Mail Server runtime featuring UNIX domain socket IPC, DNS-01 ACME automation, and unprivileged execution
+            org.opencontainers.image.description=Stalwart Mail Server scratch container image
             org.opencontainers.image.version=${{ needs.prepare.outputs.stalwart_ver }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.licenses=MIT
@@ -101,7 +101,7 @@ jobs:
           provenance: false
           labels: |
             org.opencontainers.image.title=Stalwart CLI
-            org.opencontainers.image.description=Hardened, zero-shell Stalwart CLI runtime featuring unprivileged execution
+            org.opencontainers.image.description=Stalwart CLI scratch container image
             org.opencontainers.image.version=${{ needs.prepare.outputs.cli_ver }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.licenses=MIT

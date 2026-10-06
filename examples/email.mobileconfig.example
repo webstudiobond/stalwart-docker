@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+================================================================================
+SEARCH & REPLACE GUIDE:
+Perform case-sensitive replacements in the following order:
+
+1. "info@example.org"  -> Full email address (e.g. user@yourdomain.com)
+2. "mail.example.com"  -> Mail server hostname (e.g. mail.yourdomain.com)
+3. "example.org"       -> Organization or domain name (e.g. yourdomain.com)
+4. Both PayloadUUIDs   -> Generate fresh unique UUIDs via terminal command: uuidgen
+================================================================================
+-->
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <!-- IMAP & SMTP Email Account Settings -->
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.mail.managed</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+
+            <!-- Unique payload identifier -->
+            <key>PayloadIdentifier</key>
+            <string>example.org.mail.account</string>
+
+            <!-- Unique UUID for this payload (generate via 'uuidgen') -->
+            <key>PayloadUUID</key>
+            <string>5E0CFDD5-49CD-45CF-AE90-F0E3140A581C</string>
+
+            <!-- Display name shown in Mail account list -->
+            <key>PayloadDisplayName</key>
+            <string>info@example.org</string>
+
+            <key>PayloadDescription</key>
+            <string>Configures IMAP and SMTP settings</string>
+
+            <!-- Organization or domain name -->
+            <key>PayloadOrganization</key>
+            <string>example.org</string>
+
+            <!-- Account label in Apple Mail -->
+            <key>EmailAccountDescription</key>
+            <string>info@example.org</string>
+
+            <key>EmailAccountType</key>
+            <string>EmailTypeIMAP</string>
+
+            <!-- User email address -->
+            <key>EmailAddress</key>
+            <string>info@example.org</string>
+
+            <!-- ========================================== -->
+            <!-- Incoming Mail Server (IMAP)                -->
+            <!-- ========================================== -->
+
+            <!-- Hostname of the mail server -->
+            <key>IncomingMailServerHostName</key>
+            <string>mail.example.com</string>
+            <key>IncomingMailServerPortNumber</key>
+            <integer>993</integer>
+            <key>IncomingMailServerUseSSL</key>
+            <true/>
+
+            <!-- IMAP username (full email address) -->
+            <key>IncomingMailServerUsername</key>
+            <string>info@example.org</string>
+
+            <!--
+            SECURITY WARNING:
+            Embedding passwords stores them in plaintext inside this file.
+            It is recommended to leave this block commented out so macOS/iOS prompts
+            the user interactively during profile installation and stores the password
+            directly in the Apple Keychain. If you uncomment this block, transfer the
+            profile strictly over encrypted channels and delete the file immediately
+            after installation.
+
+            <key>IncomingPassword</key>
+            <string>YOUR_PASSWORD_HERE</string>
+            -->
+
+            <key>IncomingMailServerAuthentication</key>
+            <string>EmailAuthPassword</string>
+
+            <!-- ========================================== -->
+            <!-- Outgoing Mail Server (SMTP)                -->
+            <!-- ========================================== -->
+
+            <!-- Hostname of the mail server -->
+            <key>OutgoingMailServerHostName</key>
+            <string>mail.example.com</string>
+            <!-- Port 465 with SSL/TLS (Implicit TLS) -->
+            <key>OutgoingMailServerPortNumber</key>
+            <integer>465</integer>
+            <key>OutgoingMailServerUseSSL</key>
+            <true/>
+
+            <!-- SMTP username (full email address) -->
+            <key>OutgoingMailServerUsername</key>
+            <string>info@example.org</string>
+            <key>OutgoingMailServerAuthentication</key>
+            <string>EmailAuthPassword</string>
+            <key>OutgoingPasswordSameAsIncomingPassword</key>
+            <true/>
+        </dict>
+    </array>
+
+    <!-- ============================================== -->
+    <!-- Top-Level Profile Metadata                     -->
+    <!-- ============================================== -->
+
+    <key>PayloadDescription</key>
+    <string>Configures mail settings for example.org</string>
+
+    <!-- Profile name shown in iOS/macOS Settings -> Profiles -->
+    <key>PayloadDisplayName</key>
+    <string>example.org Mail</string>
+
+    <!-- Unique profile identifier -->
+    <key>PayloadIdentifier</key>
+    <string>example.org.mail.profile</string>
+
+    <!-- Organization name -->
+    <key>PayloadOrganization</key>
+    <string>example.org</string>
+
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+
+    <!-- Unique top-level UUID (generate via 'uuidgen') -->
+    <key>PayloadUUID</key>
+    <string>817768DA-0EE0-4436-87B5-B8ACC2FBCAD6</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>

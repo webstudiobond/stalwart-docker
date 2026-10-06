@@ -103,9 +103,9 @@ jobs:
 
       - name: Prepare mock environment for Compose validation
         run: |
-          cp .env.example .env
+          cp examples/.env.example .env
           mkdir -p secrets
-          for s in db_name db_password db_user recovery_user recovery_password; do
+          for s in db_name db_password db_user; do
             touch "secrets/${s}.txt"
           done
 
