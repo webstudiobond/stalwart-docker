@@ -27,13 +27,13 @@ Production directory layout on the host (`/home/stalwart`):
 
 ```text
 ├── docker-compose.yaml                # Production deployment manifest
-├── .env                               # Host infrastructure variables (UID, GID, image versions)
-├── config/                            # Service configuration files
+├── .env                               # Host infrastructure variables (UID, GID, HOST_IP, image versions)
+├── config/                            # Service configuration
 │   ├── stalwart/
-│   │   └── config.json                # Bootstrap-generated store connection config (0600)
+│   │   └── config.json                # Bootstrap-generated store connection config
 │   └── valkey/
 │       └── valkey.conf                # In-memory Valkey configuration
-├── secrets/                           # Docker secrets directory (0700, files 0400)
+├── secrets/                           # Docker secrets directory
 │   ├── db_name.txt                    # PostgreSQL database name
 │   ├── db_user.txt                    # PostgreSQL username
 │   ├── db_password.txt                # PostgreSQL password
@@ -106,7 +106,7 @@ pwgen -s 64 1 | tr -d '\n' | sudo tee /home/stalwart/secrets/stalwart_recovery_p
 ```
 
 > NOTE: `stalwart_recovery_user.txt` and `stalwart_recovery_password.txt` are required for initial bootstrap. Although the [official Stalwart documentation](https://stalw.art/docs/configuration/recovery-mode/#recovery-administrator) advises disabling the recovery account in production, leaving it enabled in this stack is safe if desired:
-> * The credentials are high-entropy random strings stored in `0400` host files, mounted read-only via Docker Secrets, and loaded at startup by the `init` binary without appearing in `docker-compose.yaml` or `.env`.
+> * The credentials are high-entropy random strings stored in `0440` host files owned by `root:stalwart`, mounted read-only via Docker Secrets, and loaded at startup by the `init` binary without appearing in `docker-compose.yaml` or `.env`.
 > * Public access to `/admin` and `/account` is blocked (`404`) by default in Edge Angie (the WebUI location block is commented out). WebAdmin is only reachable over an SSH tunnel (`127.0.0.1:18080:8080`) or a private VPN interface (`<VPN_IP>:18080:8080`).
 >
 > Both recovery secrets are commented out by default in `docker-compose.yaml` and can be enabled permanently or on demand.
@@ -127,9 +127,9 @@ sudo -u stalwart nano /home/stalwart/secrets/cf_api_token.txt
 **Lock secret files:**
 
 ```bash
-sudo chown -R stalwart:stalwart /home/stalwart/secrets
-sudo chmod 0700 /home/stalwart/secrets
-sudo chmod 0400 /home/stalwart/secrets/*
+sudo chown -R root:stalwart /home/stalwart/secrets
+sudo chmod 0750 /home/stalwart/secrets
+sudo chmod 0440 /home/stalwart/secrets/*
 ```
 
 ### 4. Download Configuration and Compose Manifest
@@ -138,17 +138,28 @@ sudo chmod 0400 /home/stalwart/secrets/*
 REPO="https://raw.githubusercontent.com/webstudiobond/stalwart-docker/main"
 
 sudo -u stalwart curl -fsSL ${REPO}/config/valkey/valkey.conf -o /home/stalwart/config/valkey/valkey.conf
-sudo -u stalwart curl -fsSL ${REPO}/docker-compose.yaml -o /home/stalwart/docker-compose.yaml
-sudo -u stalwart curl -fsSL ${REPO}/examples/.env.example -o /home/stalwart/.env
+sudo curl -fsSL ${REPO}/docker-compose.yaml -o /home/stalwart/docker-compose.yaml
+sudo curl -fsSL ${REPO}/examples/.env.example -o /home/stalwart/.env
+sudo chmod 0600 /home/stalwart/{docker-compose.yaml,.env}
 ```
 
 ### 5. Configure Environment
 
-Verify or update `APP_UID` and `APP_GID` in `/home/stalwart/.env`, then restrict permissions:
+Identify your host's public IP address:
 
 ```bash
-sudo -u stalwart nano /home/stalwart/.env
-sudo chmod 0600 /home/stalwart/.env
+ip --br a
+```
+
+Update `/home/stalwart/.env`:
+* Ensure `APP_UID` and `APP_GID` match the `stalwart` system account created earlier (`2000`).
+* Set `HOST_IP` to the host's dedicated public IP address so Stalwart binds its public mail ports (`25`, `465`, `993`) strictly to that network interface. Never use `0.0.0.0`.
+* **IPv6 Support (Optional):** If IPv6 connectivity is required, define `HOST_IP6` in `/home/stalwart/.env` with your host's dedicated public IPv6 address, and add the corresponding bracketed port mappings (e.g., `"[${HOST_IP6}]:25:25"`, `"[${HOST_IP6}]:465:465"`, `"[${HOST_IP6}]:993:993"`) under `ports:` in `docker-compose.yaml`.
+
+> **Security Note:** `HOST_IP` intentionally defaults to `127.0.0.1` in `.env.example` for initial staging so automated scanners and malicious bots cannot probe or attack the mail server while the administrator completes initial configuration. You may keep `127.0.0.1` during bootstrap, but you must replace it with the host's dedicated public IP once setup is finalized to receive external mail.
+
+```bash
+sudo nano /home/stalwart/.env
 ```
 
 </details>
@@ -163,8 +174,8 @@ Stalwart stores its operational configuration, accounts, and domains inside Post
 ### 1. Start Database & Cache Services
 
 ```bash
-docker compose -f /home/stalwart/docker-compose.yaml up -d postgres valkey
-docker compose -f /home/stalwart/docker-compose.yaml ps
+sudo docker compose -f /home/stalwart/docker-compose.yaml up -d postgres valkey
+sudo docker compose -f /home/stalwart/docker-compose.yaml ps
 ```
 
 ### 2. Launch Temporary Bootstrap Container
@@ -172,12 +183,12 @@ docker compose -f /home/stalwart/docker-compose.yaml ps
 Pull the server image and run a temporary container bound to `127.0.0.1:18080`:
 
 ```bash
-docker compose -f /home/stalwart/docker-compose.yaml pull stalwart
+sudo docker compose -f /home/stalwart/docker-compose.yaml pull stalwart
 
 APP_UID="$(id -u stalwart)"
 APP_GID="$(id -g stalwart)"
 
-docker run --rm -d \
+sudo docker run --rm -d \
   --name stalwart_bootstrap \
   --network bridge \
   --user "${APP_UID}:${APP_GID}" \
@@ -196,7 +207,7 @@ docker run --rm -d \
   -p 127.0.0.1:18080:8080 \
   ghcr.io/webstudiobond/stalwart-docker:latest
 
-docker logs -f stalwart_bootstrap
+sudo docker logs -f stalwart_bootstrap
 ```
 
 ### 3. Complete Web Setup Wizard
@@ -227,19 +238,68 @@ docker logs -f stalwart_bootstrap
 4. Stop log following (`Ctrl+C`) and terminate the bootstrap container:
 
 ```bash
-docker stop stalwart_bootstrap
+sudo docker stop stalwart_bootstrap
 ```
 
-### 4. Lock Configuration & Start Production Stack
+### 4. Lock Configuration
 
-Restrict permissions on the generated `config.json` and start the production stack:
+The bootstrap container must be stopped before locking its writable configuration mount. Make the generated file readable, but not writable, by the service account:
 
 ```bash
-sudo chown -R stalwart:stalwart /home/stalwart
-sudo chmod 0700 /home/stalwart/config/stalwart
-sudo chmod 0600 /home/stalwart/config/stalwart/config.json
+sudo chown root:stalwart /home/stalwart/config/stalwart/config.json
+sudo chmod 0440 /home/stalwart/config/stalwart/config.json
+```
 
-docker compose -f /home/stalwart/docker-compose.yaml up -d
+### 5. Host Permissions &amp; Privilege Separation
+
+Keep deployment inputs and service configuration outside the service account's write access. The containers run with the numeric `APP_UID:APP_GID` and need write access only to their runtime storage. A compromised Stalwart process should not be able to replace its Compose manifest, configuration, or secret source files.
+
+Use `root:stalwart` for host-managed, service-readable files, and `stalwart:stalwart` only for runtime storage:
+
+| Host path | Owner | Mode | Reason |
+| --- | --- | --- | --- |
+| `/home/stalwart` | `root:stalwart` | `0750` | Allow service traversal without access for other users |
+| `docker-compose.yaml`, `.env` | `root:root` | `0600` | Host-only manifests and environment settings |
+| `config/` directories | `root:stalwart` | `0750` | Prevent service-account modification |
+| `config/stalwart/config.json`, `config/valkey/valkey.conf` | `root:stalwart` | `0440` | Read-only service configuration |
+| `secrets/` directory | `root:stalwart` | `0750` | Traverse-only access for the service group |
+| `secrets/*` | `root:stalwart` | `0440` | Read-only to the service group |
+| `data/`, `postgres/` | `stalwart:stalwart` | `0700` | Private writable runtime storage |
+| `logs/` directories | `stalwart:stalwart` | `0755` | Writable by Stalwart, readable/traversable by CrowdSec |
+| `logs/` files | `stalwart:stalwart` | `0644` | Writable by Stalwart, readable by CrowdSec |
+
+The runtime directories must remain writable by the UID/GID configured in `.env`. The Compose manifest mounts service configuration and Docker Secret sources read-only; host-side ownership and modes protect those source files as well. Keep `/home/stalwart` non-writable by the service account so it cannot replace root-owned entries. Avoid `chmod 0777`, world-readable secrets, and recursive ownership changes across the entire deployment directory. Run Compose as root (or an administrator with equivalent access), since the manifest and `.env` are `0600`.
+
+#### Apply or restore host permissions
+
+Run as a host administrator after creating the files and after any configuration or secret update. The commands intentionally do not modify file contents:
+
+```bash
+sudo chown root:stalwart /home/stalwart
+sudo chmod 0750 /home/stalwart
+sudo chown root:root /home/stalwart/docker-compose.yaml /home/stalwart/.env
+sudo chmod 0600 /home/stalwart/docker-compose.yaml /home/stalwart/.env
+
+sudo chown -R root:stalwart /home/stalwart/config
+sudo find /home/stalwart/config -type d -exec chmod 0750 {} +
+sudo find /home/stalwart/config -type f -exec chmod 0440 {} +
+
+sudo chown -R root:stalwart /home/stalwart/secrets
+sudo find /home/stalwart/secrets -type d -exec chmod 0750 {} +
+sudo find /home/stalwart/secrets -type f -exec chmod 0440 {} +
+
+sudo chown -R stalwart:stalwart /home/stalwart/data /home/stalwart/logs /home/stalwart/postgres
+sudo chmod 0700 /home/stalwart/data /home/stalwart/postgres
+sudo chmod 0755 /home/stalwart/logs
+sudo find /home/stalwart/logs -type f -exec chmod 0644 {} +
+```
+
+The secret-file commands assume that every file in `secrets/` is an intended Docker Secret. Apply them only after creating the directory and its required files. When rotating a secret, update it as an administrator, then restore `root:stalwart` ownership and `0440` mode before restarting the affected service.
+
+### 6. Start Production Stack
+
+```bash
+sudo docker compose -f /home/stalwart/docker-compose.yaml up -d
 ```
 
 </details>
@@ -273,9 +333,9 @@ In WebAdmin (**Settings › Security › Allowed IPs**), optionally whitelist in
 
 ### 3. DKIM & DKIM2 Signing (`RFC 6376` / `draft-ietf-dkim-dkim2-spec`)
 
-Provisioning keys via Docker Secrets keeps private keys out of the PostgreSQL database (`0400` host files mounted on read-only `tmpfs`) and allows publishing strict DNS records (`t=s`) rather than Stalwart's permissive defaults. Because DKIM2 reuses standard `v=DKIM1` `_domainkey` DNS TXT records and has cryptographic domain separation from DKIM1, the same key pairs and selectors can safely sign both protocols simultaneously.
+Provisioning keys via Docker Secrets keeps private keys out of the PostgreSQL database (`0440` host files owned by `root:stalwart` mounted on read-only `tmpfs`) and allows publishing strict DNS records (`t=s`) rather than Stalwart's permissive defaults. Because DKIM2 reuses standard `v=DKIM1` `_domainkey` DNS TXT records and has cryptographic domain separation from DKIM1, the same key pairs and selectors can safely sign both protocols simultaneously.
 
-1. **Mount secret files:** Uncomment `dkim_ed25519_key` and `dkim_rsa_key` (and any additional domain keys) under both the `stalwart` service `secrets:` section and the root `secrets:` block in `docker-compose.yaml`, then recreate the container (`docker compose up -d`).
+1. **Mount secret files:** Uncomment `dkim_ed25519_key` and `dkim_rsa_key` (and any additional domain keys) under both the `stalwart` service `secrets:` section and the root `secrets:` block in `docker-compose.yaml`, then recreate the container (`sudo docker compose -f /home/stalwart/docker-compose.yaml up -d`).
 2. **Extract public keys & publish strict DNS TXT records:**
 
    ```bash
@@ -338,14 +398,14 @@ Provisioning keys via Docker Secrets keeps private keys out of the PostgreSQL da
 
 To obtain TLS certificates for mail protocols (`25`, `465`, `993`) via DNS-01 without exposing API credentials in plaintext—for example, if you use Cloudflare as your DNS provider (for other DNS providers, rename or add the corresponding secret files in `docker-compose.yaml`):
 
-1. Uncomment `cf_api_token` in `docker-compose.yaml` and run `docker compose up -d`.
+1. Uncomment `cf_api_token` in `docker-compose.yaml` and run `sudo docker compose -f /home/stalwart/docker-compose.yaml up -d`.
 2. In WebAdmin (**Settings › Server › TLS › ACME Providers**), select **Secret read from file** for the provider token and specify `/run/secrets/cf_api_token`.
 
 ### 5. Optional Ports & Private WebAdmin Access
 
 In `docker-compose.yaml`, optional listeners are commented out by default:
 
-* **`587:587` (STARTTLS Submission):** Disabled in favor of Implicit TLS on port `465`. Uncomment only if legacy clients require port `587`.
+* **`${HOST_IP}:587:587` (STARTTLS Submission):** Disabled in favor of Implicit TLS on port `465`. Uncomment only if legacy clients require port `587`.
 * **`127.0.0.1:18080:8080` (Private WebAdmin):** Exposes the HTTP management interface on loopback for SSH port forwarding (`ssh -N -L 18080:127.0.0.1:18080 user@server`) when public WebUI access is blocked at the Edge proxy. For direct access over a VPN (e.g., WireGuard), replace `127.0.0.1` with the host's internal VPN interface IP (e.g., `10.0.0.1:18080:8080`).
 * **`127.0.0.1:4190:4190` (ManageSieve):** Bound to localhost by default; replace `127.0.0.1` with a private VPN IP or uncomment as needed if desktop mail clients require direct ManageSieve access.
 
@@ -436,27 +496,27 @@ sed -i \
 
 Authenticate interactively with `--user <ADMIN_USER>` (either a database administrator account or the recovery administrator username when `stalwart_recovery_user` / `stalwart_recovery_password` are enabled in `docker-compose.yaml`); `stalwart-cli` prompts for the password interactively via TTY so credentials are never exposed in shell history, process arguments, or container environment inspection.
 
-Note that `Domain`, `Account`, and `QueueMessage` below are literal JMAP schema object types (not placeholders—`query Domain` lists all configured domains on the server):
+Note that `Domain`, `Account`, and `QueueMessage` below are literal JMAP schema object types (not placeholders—`query Domain` lists all configured domains on the server). Because `/home/stalwart/docker-compose.yaml` and `.env` are restricted to `0600 root:root`, standalone commands require `sudo`:
 
 ```bash
 # List all available configuration object types (or inspect a specific schema, e.g. 'describe Account')
-docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> describe
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> describe
 
 # List all configured mail domains
-docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query Domain
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query Domain
 
 # List all accounts
-docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query Account
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query Account
 
 # Inspect the outbound mail queue
-docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query QueueMessage
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query QueueMessage
 ```
 
 > TIP: When the `stalwart` container is already running, `--no-deps` skips dependency checks and executes commands immediately.
 
 ### Shell Function for Interactive Sessions
 
-Add a helper function to `~/.bashrc`:
+Because `sudo` cannot be embedded inside `.bashrc` functions, this helper is designed for use exclusively under `root` (`sudo -i`). Add the helper function to `/root/.bashrc`:
 
 ```bash
 stalwart_cli() {

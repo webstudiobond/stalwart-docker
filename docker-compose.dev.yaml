@@ -116,10 +116,10 @@ services:
           pids: 100
     mem_reservation: 256m
     ports:
-      - "25:25"
-      - "465:465"
-      - "993:993"
-      # - "587:587"   # STARTTLS Submission (optional, implicit TLS on 465 is preferred)
+      - "${HOST_IP:-127.0.0.1}:25:25"
+      - "${HOST_IP:-127.0.0.1}:465:465"
+      - "${HOST_IP:-127.0.0.1}:993:993"
+      # - "${HOST_IP:-127.0.0.1}:587:587"   # STARTTLS Submission (optional, implicit TLS on 465 is preferred)
       # - "127.0.0.1:4190:4190" # ManageSieve (optional, for desktop client sieve rule filtering)
       # - "127.0.0.1:18080:8080"
     tmpfs:
