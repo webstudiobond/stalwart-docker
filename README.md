@@ -421,7 +421,7 @@ To obtain TLS certificates for mail protocols (`25`, `465`, `993`) via DNS-01 wi
 In `docker-compose.yaml`, optional listeners are commented out by default:
 
 * **`${HOST_IP}:587:587` (STARTTLS Submission):** Disabled in favor of Implicit TLS on port `465`. Uncomment only if legacy clients require port `587`.
-* **`127.0.0.1:18080:8080` (Private WebAdmin):** Exposes the HTTP management interface on loopback for SSH port forwarding (`ssh -N -L 18080:127.0.0.1:18080 user@server`) when public WebUI access is blocked at the Edge proxy. For direct access over a VPN (e.g., WireGuard), replace `127.0.0.1` with the host's internal VPN interface IP (e.g., `10.0.0.1:18080:8080`).
+* **`127.0.0.1:18080:8080` (Private WebAdmin):** Exposes the HTTP management interface on loopback for SSH port forwarding (`ssh -N -L 18080:127.0.0.1:18080 user@server`) when public WebUI access is blocked at the Edge proxy. For direct access over a VPN (e.g., WireGuard), replace `127.0.0.1` with the host's internal VPN interface IP (e.g., `10.0.0.1:18080:8080`). Note that accessing WebAdmin over plain HTTP requires pre-registering an `OAuthClient` (see **Stalwart CLI**).
 * **`127.0.0.1:4190:4190` (ManageSieve):** Bound to localhost by default; replace `127.0.0.1` with a private VPN IP or uncomment as needed if desktop mail clients require direct ManageSieve access.
 
 </details>
@@ -565,7 +565,7 @@ sed -i \
 
 Authenticate interactively with `--user <ADMIN_USER>` (either a database administrator account or the recovery administrator username when `stalwart_recovery_user` / `stalwart_recovery_password` are enabled in `docker-compose.yaml`); `stalwart-cli` prompts for the password interactively via TTY so credentials are never exposed in shell history, process arguments, or container environment inspection.
 
-Note that `Domain`, `Account`, and `QueueMessage` below are literal JMAP schema object types (not placeholders—`query Domain` lists all configured domains on the server). Because `/home/stalwart/docker-compose.yaml` and `.env` are restricted to `0600 root:root`, standalone commands require `sudo`:
+Note that `Domain`, `Account`, `Application`, `OAuthClient`, and `QueueMessage` below are literal JMAP schema object types (not placeholders—`query Domain` lists all configured domains on the server). Because `/home/stalwart/docker-compose.yaml` and `.env` are restricted to `0600 root:root`, standalone commands require `sudo`:
 
 ```bash
 # List all available configuration object types (or inspect a specific schema, e.g. 'describe Account')
@@ -579,9 +579,52 @@ sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps sta
 
 # Inspect the outbound mail queue
 sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query QueueMessage
+
+# List web applications and inspect their bundle URLs
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query Application
+
+# Update WebUI application bundle URL (e.g. to release channel v2)
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> update Application <APPLICATION_ID> --field resourceUrl=https://github.com/stalwartlabs/webui/releases/download/v2/webui.zip
+
+# List registered OAuth clients
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> query OAuthClient
 ```
 
 > TIP: When the `stalwart` container is already running, `--no-deps` skips dependency checks and executes commands immediately.
+
+### Registering OAuth Clients for Private WebAdmin Access
+
+When accessing WebAdmin over plain HTTP (`127.0.0.1:18080` via SSH tunnel or `<VPN_IP>:18080` via WireGuard), Stalwart rejects dynamic client registration with `Unknown client id`. Register an explicit `OAuthClient` in the database to authorize private HTTP access:
+
+**For SSH port forwarding loopback (`127.0.0.1:18080`):**
+
+```bash
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> create OAuthClient --json '{
+  "clientId": "http://127.0.0.1:18080/account/oauth-client.json",
+  "description": "Stalwart WebAdmin (SSH Tunnel)",
+  "redirectUris": {
+    "http://127.0.0.1:18080/account/oauth/callback": true,
+    "http://127.0.0.1:18080/admin/oauth/callback": true
+  }
+}'
+```
+
+**For private VPN / WireGuard access (`<VPN_IP>:18080`):**
+
+Replace `<VPN_IP>` and `<PORT>` with your dedicated internal VPN interface address and management port:
+
+```bash
+sudo docker compose -f /home/stalwart/docker-compose.yaml run --rm --no-deps stalwart-cli --user <ADMIN_USER> create OAuthClient --json '{
+  "clientId": "http://<VPN_IP>:<PORT>/account/oauth-client.json",
+  "description": "Stalwart WebAdmin (WireGuard)",
+  "redirectUris": {
+    "http://<VPN_IP>:<PORT>/account/oauth/callback": true,
+    "http://<VPN_IP>:<PORT>/admin/oauth/callback": true
+  }
+}'
+```
+
+Once registered, navigate to `http://127.0.0.1:18080/admin` (or `http://<VPN_IP>:<PORT>/admin`), sign in with your administrator or recovery credentials, and click **Allow** on the authorization consent screen.
 
 ### Shell Function for Interactive Sessions
 
@@ -598,6 +641,8 @@ source ~/.bashrc
 stalwart_cli --user <ADMIN_USER> describe
 stalwart_cli --user <ADMIN_USER> query Domain
 stalwart_cli --user <ADMIN_USER> query Account
+stalwart_cli --user <ADMIN_USER> query Application
+stalwart_cli --user <ADMIN_USER> query OAuthClient
 stalwart_cli --user <ADMIN_USER> query QueueMessage
 ```
 
