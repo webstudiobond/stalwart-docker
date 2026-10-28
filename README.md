@@ -65,26 +65,38 @@ docker network create --subnet=172.20.0.0/16 frontend_gateway
 
 ### 1. Create a Dedicated System User
 
-Verify that numeric IDs `2000:2000` are unused and create an unprivileged system account with a disabled login shell:
+Choose a dedicated, unprivileged numeric ID unique to this service on your host and verify that it is not already in use by another user or group:
 
 ```bash
-APP_UID=2000
-APP_GID=2000
+APP_UID=<CHOSEN_UID>
 
 getent passwd ${APP_UID}
-getent group ${APP_GID}
+getent group ${APP_UID}
 ```
 
+> **Important:** Both commands must return empty output. Each containerized service must have its own dedicated unprivileged user and group to enforce strict host DAC privilege separation between different stacks.
+
+Create an unprivileged system account with a matching user-group (`-U`) and disabled login shell:
+
 ```bash
-sudo groupadd -g ${APP_GID} stalwart
-sudo useradd -m -d /home/stalwart -s /usr/sbin/nologin -u ${APP_UID} -g ${APP_GID} stalwart
+sudo useradd -m -d /home/stalwart -s /usr/sbin/nologin -u ${APP_UID} -U stalwart
 ```
 
 ### 2. Create Directory Structure
 
 ```bash
-sudo -u stalwart mkdir -p /home/stalwart/{config/{stalwart,valkey},data,logs,postgres,secrets}
-sudo chmod 0700 /home/stalwart/secrets /home/stalwart/config/stalwart
+sudo mkdir -p /home/stalwart/{config/{stalwart,valkey},data,logs,postgres,secrets}
+sudo chown root:stalwart /home/stalwart/secrets
+sudo chmod 0750 /home/stalwart/secrets
+sudo chown stalwart:stalwart /home/stalwart/{config/valkey,data,logs,postgres}
+sudo chmod 0700 /home/stalwart/{config/stalwart,data,logs,postgres}
+```
+
+> **Log Access for Non-Root Services (Optional):** By default, `logs/` is restricted to `0700`. If an external unprivileged service (such as CrowdSec running under a non-root account) requires access to parse application logs, grant read permissions to the directory and log files:
+
+```bash
+sudo chmod 0755 /home/stalwart/logs
+sudo chmod 0644 /home/stalwart/logs/*
 ```
 
 ### 3. Generate Secrets
@@ -97,7 +109,13 @@ sudo apt update && sudo apt install -y pwgen openssl
 
 **Database and recovery administrator credentials:**
 
+Initialize secret files with strict DAC permissions before writing:
+
 ```bash
+sudo touch /home/stalwart/secrets/{db_name,db_user,db_password,stalwart_recovery_user,stalwart_recovery_password}.txt
+sudo chown root:stalwart /home/stalwart/secrets/{db_name,db_user,db_password,stalwart_recovery_user,stalwart_recovery_password}.txt
+sudo chmod 0440 /home/stalwart/secrets/{db_name,db_user,db_password,stalwart_recovery_user,stalwart_recovery_password}.txt
+
 printf "db_%s" "$(pwgen -s -A 6 1)" | sudo tee /home/stalwart/secrets/db_name.txt > /dev/null
 printf "u_%s" "$(pwgen -s -A 6 1)" | sudo tee /home/stalwart/secrets/db_user.txt > /dev/null
 pwgen -s 64 1 | tr -d '\n' | sudo tee /home/stalwart/secrets/db_password.txt > /dev/null
@@ -116,20 +134,17 @@ pwgen -s 64 1 | tr -d '\n' | sudo tee /home/stalwart/secrets/stalwart_recovery_p
 Stalwart can generate DKIM keys and manage ACME certificates directly in its database. Alternatively, you can provision keys and API tokens on the host as read-only Docker Secrets (`/run/secrets/*`)—creating as many domain keys as needed—and select **Secret read from file** in WebAdmin:
 
 ```bash
-# Optional: Ed25519 and RSA-2048 DKIM private keys
-sudo -u stalwart openssl genpkey -algorithm ed25519 -out /home/stalwart/secrets/dkim_ed25519.key
-sudo -u stalwart openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /home/stalwart/secrets/dkim_rsa.key
-
-# Optional: DNS provider API token for DNS-01 ACME validation (e.g., Cloudflare)
-sudo -u stalwart nano /home/stalwart/secrets/cf_api_token.txt
+sudo openssl genpkey -algorithm ed25519 -out /home/stalwart/secrets/dkim_ed25519.key
+sudo openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /home/stalwart/secrets/dkim_rsa.key
+sudo chown root:stalwart /home/stalwart/secrets/dkim_*.key
+sudo chmod 0440 /home/stalwart/secrets/dkim_*.key
 ```
 
-**Lock secret files:**
-
 ```bash
-sudo chown -R root:stalwart /home/stalwart/secrets
-sudo chmod 0750 /home/stalwart/secrets
-sudo chmod 0440 /home/stalwart/secrets/*
+sudo touch /home/stalwart/secrets/cf_api_token.txt
+sudo chown root:stalwart /home/stalwart/secrets/cf_api_token.txt
+sudo chmod 0440 /home/stalwart/secrets/cf_api_token.txt
+sudo nano /home/stalwart/secrets/cf_api_token.txt
 ```
 
 ### 4. Download Configuration and Compose Manifest
@@ -140,10 +155,16 @@ REPO="https://raw.githubusercontent.com/webstudiobond/stalwart-docker/main"
 sudo -u stalwart curl -fsSL ${REPO}/config/valkey/valkey.conf -o /home/stalwart/config/valkey/valkey.conf
 sudo curl -fsSL ${REPO}/docker-compose.yaml -o /home/stalwart/docker-compose.yaml
 sudo curl -fsSL ${REPO}/examples/.env.example -o /home/stalwart/.env
+sudo chown root:root /home/stalwart/{docker-compose.yaml,.env}
 sudo chmod 0600 /home/stalwart/{docker-compose.yaml,.env}
 ```
 
 ### 5. Configure Environment
+
+```bash
+sed -i "s/^APP_UID=.*/APP_UID=${APP_UID}/" /home/stalwart/.env
+sed -i "s/^APP_GID=.*/APP_GID=${APP_UID}/" /home/stalwart/.env
+```
 
 Identify your host's public IP address:
 
@@ -152,7 +173,6 @@ ip --br a
 ```
 
 Update `/home/stalwart/.env`:
-* Ensure `APP_UID` and `APP_GID` match the `stalwart` system account created earlier (`2000`).
 * Set `HOST_IP` to the host's dedicated public IP address so Stalwart binds its public mail ports (`25`, `465`, `993`) strictly to that network interface. Never use `0.0.0.0`.
 * **IPv6 Support (Optional):** If IPv6 connectivity is required, define `HOST_IP6` in `/home/stalwart/.env` with your host's dedicated public IPv6 address, and add the corresponding bracketed port mappings (e.g., `"[${HOST_IP6}]:25:25"`, `"[${HOST_IP6}]:465:465"`, `"[${HOST_IP6}]:993:993"`) under `ports:` in `docker-compose.yaml`.
 
@@ -167,7 +187,7 @@ sudo nano /home/stalwart/.env
 ---
 
 <details>
-<summary><strong>Bootstrap &amp; First Run</strong></summary>
+<summary><strong>Initial Configuration (Bootstrap)</strong></summary>
 
 Stalwart stores its operational configuration, accounts, and domains inside PostgreSQL. Initial setup is performed once via a temporary bootstrap container with outbound network access so Stalwart can download its WebUI asset bundle and write the store connection config to `/home/stalwart/config/stalwart/config.json`.
 
@@ -212,30 +232,18 @@ sudo docker logs -f stalwart_bootstrap
 
 ### 3. Complete Web Setup Wizard
 
-1. Forward port `18080` over SSH from your workstation (`ssh -N -L 18080:127.0.0.1:18080 user@server`) and open `http://127.0.0.1:18080/admin`.
-2. Authenticate with the credentials from `secrets/stalwart_recovery_user.txt` and `secrets/stalwart_recovery_password.txt`.
-3. Configure the wizard parameters:
-   * **Server Identity:**
-     * **Server Hostname:** Public mail FQDN (e.g., `mail.example.com`).
-     * **Default Email Domain:** Primary mail domain (e.g., `example.com`).
-     * **Automatically Obtain TLS Certificate:** Disable during bootstrap (configure DNS-01 ACME or external certificates after setup).
-     * **Generate Email Signing Keys:** Enable to auto-generate DKIM keys in the database, or disable if providing external key files via Docker Secrets.
-   * **Data Store:** Select `PostgreSQL`.
-     * **Host:** `/var/run/postgresql`
-     * **Port:** `5432` (used in the UNIX socket filename `.s.PGSQL.5432`).
-     * **Database:** Value from `secrets/db_name.txt`.
-     * **Username:** Value from `secrets/db_user.txt`.
-     * **Password:** Select **Secret read from file** and set `/run/secrets/db_password`.
-     * **Enable TLS / Allow Invalid Certs:** Disable both.
-     * **Max Connections:** `10` (`Fast` recycling).
-   * **Attachment & File Storage:** Select `FileSystem`, path `/var/lib/stalwart`, **Nested Depth** `2`.
-   * **Full-Text Search Index:** Keep the default (`PostgreSQL`).
-   * **Cache & Temporary Data:** Select standalone `Redis/Valkey`, URL `redis://127.0.0.1:6379` (keep default timeouts and connection limits).
-   * **Account Directory:** Select `Internal`.
-   * **Log Destination:** Select `File`, path `/var/log/stalwart`, prefix `stalwart.log`, daily rotation, ANSI colors disabled, tracer enabled, level `Info`. Set **Filtering Mode** to `Exclude the specified events` and exclude noisy background events (`Metric store`, `Metrics collected`, `Metrics pushed`, `Task queued for processing`, `Task scheduled for future execution`, `Search index updated`).
-   * **Automatic DNS Management:** Keep manual (or configure DNS provider integration later).
-   * **Administrator:** The wizard automatically generates a default `admin@<domain>` mailbox and displays its password once—record it if you plan to keep the account. **Security Recommendation:** Because `admin@<domain>` is a predictable target for brute-force and credential-stuffing attacks, log back in with your `stalwart_recovery_user` credentials after setup, delete the auto-generated `admin@<domain>` account, and create accounts with non-predictable identifiers instead.
-4. Stop log following (`Ctrl+C`) and terminate the bootstrap container:
+1. **Access Setup Wizard:** Forward port `18080` over SSH from your workstation (`ssh -N -L 18080:127.0.0.1:18080 user@server`) and navigate to `http://127.0.0.1:18080/admin`.
+2. **Authenticate:** Sign in using the credentials from `secrets/stalwart_recovery_user.txt` and `secrets/stalwart_recovery_password.txt`.
+3. **Server Identity:** Set **Server Hostname** to your public mail FQDN (e.g., `mail.example.com`) and **Default Email Domain** to your primary domain (e.g., `example.com`). Disable automatic TLS certificate retrieval (configure DNS-01 ACME or external certificates after setup). Enable email signing key generation to auto-generate DKIM keys in the database, or disable if providing external key files via Docker Secrets.
+4. **Data Store:** Select `PostgreSQL`. Set **Host** to `/var/run/postgresql`, **Port** to `5432` (used in the UNIX socket filename `.s.PGSQL.5432`), **Database** to the value from `secrets/db_name.txt`, and **Username** to the value from `secrets/db_user.txt`. Select **Secret read from file** for **Password** with path `/run/secrets/db_password`. Disable TLS and allow invalid certs. Set **Max Connections** to `10` (`Fast` recycling).
+5. **Attachment & File Storage:** Select `FileSystem`, set path to `/var/lib/stalwart`, and choose **Nested Depth** `2`.
+6. **Full-Text Search Index:** Keep the default (`PostgreSQL`).
+7. **Cache & Temporary Data:** Select standalone `Redis/Valkey`, set URL to `redis://127.0.0.1:6379`, and keep default timeouts and connection limits.
+8. **Account Directory:** Select `Internal`.
+9. **Log Destination:** Select `File`, set path to `/var/log/stalwart`, prefix `stalwart.log`, daily rotation, ANSI colors disabled, tracer enabled, and level `Info`. Set **Filtering Mode** to `Exclude the specified events` and exclude noisy background events (`Metric store`, `Metrics collected`, `Metrics pushed`, `Task queued for processing`, `Task scheduled for future execution`, `Search index updated`).
+10. **Automatic DNS Management:** Select manual (or configure DNS provider integration later).
+11. **Administrator Account:** The wizard automatically generates a default `admin@<domain>` mailbox and displays its password once—record it if you plan to keep the account. Because `admin@<domain>` is a predictable target for brute-force and credential-stuffing attacks, log back in with your `stalwart_recovery_user` credentials after setup, delete the auto-generated `admin@<domain>` account, and create accounts with non-predictable identifiers instead.
+12. **Terminate Bootstrap Container:** Stop log following (`Ctrl+C`) and terminate the temporary container:
 
 ```bash
 sudo docker stop stalwart_bootstrap
@@ -250,56 +258,63 @@ sudo chown root:stalwart /home/stalwart/config/stalwart/config.json
 sudo chmod 0440 /home/stalwart/config/stalwart/config.json
 ```
 
-### 5. Host Permissions &amp; Privilege Separation
+</details>
 
-Keep deployment inputs and service configuration outside the service account's write access. The containers run with the numeric `APP_UID:APP_GID` and need write access only to their runtime storage. A compromised Stalwart process should not be able to replace its Compose manifest, configuration, or secret source files.
+---
 
-Use `root:stalwart` for host-managed, service-readable files, and `stalwart:stalwart` only for runtime storage:
+<details>
+<summary><strong>Operation &amp; Maintenance</strong></summary>
 
-| Host path | Owner | Mode | Reason |
-| --- | --- | --- | --- |
-| `/home/stalwart` | `root:stalwart` | `0750` | Allow service traversal without access for other users |
-| `docker-compose.yaml`, `.env` | `root:root` | `0600` | Host-only manifests and environment settings |
-| `config/` directories | `root:stalwart` | `0750` | Prevent service-account modification |
-| `config/stalwart/config.json`, `config/valkey/valkey.conf` | `root:stalwart` | `0440` | Read-only service configuration |
-| `secrets/` directory | `root:stalwart` | `0750` | Traverse-only access for the service group |
-| `secrets/*` | `root:stalwart` | `0440` | Read-only to the service group |
-| `data/`, `postgres/` | `stalwart:stalwart` | `0700` | Private writable runtime storage |
-| `logs/` directories | `stalwart:stalwart` | `0755` | Writable by Stalwart, readable/traversable by CrowdSec |
-| `logs/` files | `stalwart:stalwart` | `0644` | Writable by Stalwart, readable by CrowdSec |
+### Starting the Stack
 
-The runtime directories must remain writable by the UID/GID configured in `.env`. The Compose manifest mounts service configuration and Docker Secret sources read-only; host-side ownership and modes protect those source files as well. Keep `/home/stalwart` non-writable by the service account so it cannot replace root-owned entries. Avoid `chmod 0777`, world-readable secrets, and recursive ownership changes across the entire deployment directory. Run Compose as root (or an administrator with equivalent access), since the manifest and `.env` are `0600`.
-
-#### Apply or restore host permissions
-
-Run as a host administrator after creating the files and after any configuration or secret update. The commands intentionally do not modify file contents:
-
-```bash
-sudo chown root:stalwart /home/stalwart
-sudo chmod 0750 /home/stalwart
-sudo chown root:root /home/stalwart/docker-compose.yaml /home/stalwart/.env
-sudo chmod 0600 /home/stalwart/docker-compose.yaml /home/stalwart/.env
-
-sudo chown -R root:stalwart /home/stalwart/config
-sudo find /home/stalwart/config -type d -exec chmod 0750 {} +
-sudo find /home/stalwart/config -type f -exec chmod 0440 {} +
-
-sudo chown -R root:stalwart /home/stalwart/secrets
-sudo find /home/stalwart/secrets -type d -exec chmod 0750 {} +
-sudo find /home/stalwart/secrets -type f -exec chmod 0440 {} +
-
-sudo chown -R stalwart:stalwart /home/stalwart/data /home/stalwart/logs /home/stalwart/postgres
-sudo chmod 0700 /home/stalwart/data /home/stalwart/postgres
-sudo chmod 0755 /home/stalwart/logs
-sudo find /home/stalwart/logs -type f -exec chmod 0644 {} +
-```
-
-The secret-file commands assume that every file in `secrets/` is an intended Docker Secret. Apply them only after creating the directory and its required files. When rotating a secret, update it as an administrator, then restore `root:stalwart` ownership and `0440` mode before restarting the affected service.
-
-### 6. Start Production Stack
+Start all production services in the background:
 
 ```bash
 sudo docker compose -f /home/stalwart/docker-compose.yaml up -d
+```
+
+### Verifying Service Health
+
+Inspect container status, healthcheck states, and resource usage:
+
+```bash
+sudo docker compose -f /home/stalwart/docker-compose.yaml ps
+sudo docker stats --no-stream stalwart-mail stalwart-db stalwart-cache
+```
+
+### Inspecting Runtime Logs
+
+Follow real-time application and database logs:
+
+```bash
+# Follow all stack logs
+sudo docker compose -f /home/stalwart/docker-compose.yaml logs -f
+
+# Follow mail server logs only
+sudo docker compose -f /home/stalwart/docker-compose.yaml logs -f stalwart
+```
+
+### Updating the Stack
+
+Pull updated container images and recreate services with minimal downtime:
+
+```bash
+sudo docker compose -f /home/stalwart/docker-compose.yaml pull
+sudo docker compose -f /home/stalwart/docker-compose.yaml up -d
+```
+
+### Stopping & Tearing Down
+
+Gracefully stop running containers without removing them:
+
+```bash
+sudo docker compose -f /home/stalwart/docker-compose.yaml stop
+```
+
+Stop and remove containers and internal networks (persistent data in `data/`, `postgres/`, and `logs/` is preserved):
+
+```bash
+sudo docker compose -f /home/stalwart/docker-compose.yaml down
 ```
 
 </details>
@@ -445,6 +460,60 @@ nano "${DATA_ANGIE}/conf.d/domains/stalwart.conf"
 nano "${DATA_ANGIE}/conf.d/domains/autoconfig.conf"
 nano "${DATA_ANGIE}/conf.d/domains/autodiscover.conf"
 nano "${DATA_ANGIE}/conf.d/domains/mta-sts.conf"
+```
+
+</details>
+
+---
+
+<details>
+<summary><strong>Permissions &amp; Ownership</strong></summary>
+
+### Host Permissions & Privilege Separation
+
+The stack enforces strict host-level privilege separation across three ownership tiers so that even in the event of a container compromise (`stalwart`), the process cannot modify deployment manifests, service configurations, or secret files:
+
+* `root:root` (`0600`): `docker-compose.yaml` and `.env` (accessible exclusively to host root).
+* `root:stalwart` (`0750`/`0440`): `/home/stalwart` base directory (`0750`), `config/` directories (`0750`), `secrets/` directory (`0750`), configuration files (`config.json`, `valkey.conf` at `0440`), and secret files (`*.txt`, `*.key` at `0440`; read-only to containers, immutable to runtime processes).
+* `stalwart:stalwart` (`0700`/`0600`): `data/` (blob storage), `postgres/` (database cluster), and `logs/` (application logs). Managed with strict DAC: directories `0700`, files `0600`.
+
+| Host path | Owner | Mode | Reason |
+| --- | --- | --- | --- |
+| `/home/stalwart` | `root:stalwart` | `0750` | Allow service traversal without access for other users |
+| `docker-compose.yaml`, `.env` | `root:root` | `0600` | Host-only manifests and environment settings |
+| `config/` directories | `root:stalwart` | `0750` | Prevent service-account modification |
+| `config/stalwart/config.json`, `config/valkey/valkey.conf` | `root:stalwart` | `0440` | Read-only service configuration |
+| `secrets/` directory | `root:stalwart` | `0750` | Traverse-only access for the service group |
+| `secrets/*` | `root:stalwart` | `0440` | Read-only to the service group |
+| `data/`, `postgres/` | `stalwart:stalwart` | `0700` | Private writable runtime storage |
+| `logs/` directory | `stalwart:stalwart` | `0700` | Writable by Stalwart, readable by host root CrowdSec |
+| `logs/` files | `stalwart:stalwart` | `0600` | Writable by Stalwart, readable by host root CrowdSec |
+
+### One-Shot Permission Reset (Running Stack)
+
+Use this self-contained block to apply or restore canonical ownership and permissions on an existing or migrated installation without stopping the stack:
+
+```bash
+sudo chown root:stalwart /home/stalwart
+sudo chmod 0750 /home/stalwart
+
+sudo chown root:root /home/stalwart/{docker-compose.yaml,.env}
+sudo chmod 0600 /home/stalwart/{docker-compose.yaml,.env}
+
+sudo chown -R root:stalwart /home/stalwart/{config,secrets}
+sudo find /home/stalwart/{config,secrets} -type d -exec chmod 0750 {} +
+sudo find /home/stalwart/{config,secrets} -type f -exec chmod 0440 {} +
+
+sudo chown -R stalwart:stalwart /home/stalwart/{data,logs,postgres}
+sudo find /home/stalwart/{data,logs,postgres} -type d -exec chmod 0700 {} +
+sudo find /home/stalwart/{data,logs,postgres} -type f -exec chmod 0600 {} +
+```
+
+> **Log Access for Non-Root Services (Optional):** By default, `logs/` is restricted to `0700`. If an external unprivileged service (such as CrowdSec running under a non-root account) requires access to parse application logs, grant read permissions to the directory and log files:
+
+```bash
+sudo chmod 0755 /home/stalwart/logs
+sudo chmod 0644 /home/stalwart/logs/*
 ```
 
 </details>

@@ -1,9 +1,6 @@
 name: Build and Publish Docker Image
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 env:
@@ -20,24 +17,34 @@ jobs:
     timeout-minutes: 5
     outputs:
       stalwart_ver: ${{ steps.extract.outputs.stalwart_ver }}
-      cli_ver:      ${{ steps.extract.outputs.cli_ver }}
-      image_base:   ${{ steps.extract.outputs.image_base }}
+      cli_ver: ${{ steps.extract.outputs.cli_ver }}
+      image_base: ${{ steps.extract.outputs.image_base }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Extract versions from Dockerfile
         id: extract
+        env:
+          IMAGE_REPO: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         run: |
-          STALWART_VER=$(sed -nE 's|^FROM ghcr\.io/stalwartlabs/stalwart:v?([0-9]+(\.[0-9]+)+)[^ ]* AS stalwart-donor$|\1|p' Dockerfile)
-          CLI_VER=$(sed -nE 's|^FROM ghcr\.io/stalwartlabs/cli:v?([0-9]+(\.[0-9]+)+)[^ ]* AS cli-donor$|\1|p' Dockerfile)
-          IMAGE_BASE=$(echo "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_BASE=$(printf '%s\n' "$IMAGE_REPO" | tr '[:upper:]' '[:lower:]')
+          STALWART_VER=$(sed -nE 's|^FROM ghcr\.io/stalwartlabs/stalwart:v?([0-9]+\.[0-9]+\.[0-9]+).* AS stalwart-donor$|\1|p' Dockerfile)
+          CLI_VER=$(sed -nE 's|^FROM ghcr\.io/stalwartlabs/cli:v?([0-9]+\.[0-9]+\.[0-9]+).* AS cli-donor$|\1|p' Dockerfile)
 
-          [ -n "${STALWART_VER}" ] || { echo "ERROR: failed to parse Stalwart version"; exit 1; }
-          [ -n "${CLI_VER}" ]      || { echo "ERROR: failed to parse Stalwart CLI version"; exit 1; }
+          if [[ ! "$STALWART_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'ERROR: invalid or missing Stalwart version: %s\n' "$STALWART_VER" >&2
+            exit 1
+          fi
 
-          echo "stalwart_ver=${STALWART_VER}" >> "$GITHUB_OUTPUT"
-          echo "cli_ver=${CLI_VER}"           >> "$GITHUB_OUTPUT"
-          echo "image_base=${IMAGE_BASE}"     >> "$GITHUB_OUTPUT"
+          if [[ ! "$CLI_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'ERROR: invalid or missing Stalwart CLI version: %s\n' "$CLI_VER" >&2
+            exit 1
+          fi
+
+          printf 'stalwart_ver=%s\n' "$STALWART_VER" >> "$GITHUB_OUTPUT"
+          printf 'cli_ver=%s\n' "$CLI_VER" >> "$GITHUB_OUTPUT"
+          printf 'image_base=%s\n' "$IMAGE_BASE" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.platform }})
@@ -58,13 +65,17 @@ jobs:
             push_tag_suffix: -arm64
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
-      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -81,12 +92,8 @@ jobs:
           tags: |
             ${{ needs.prepare.outputs.image_base }}:${{ needs.prepare.outputs.stalwart_ver }}${{ matrix.push_tag_suffix }}
           provenance: false
-          labels: |
-            org.opencontainers.image.title=Stalwart Mail Server
-            org.opencontainers.image.description=Stalwart Mail Server scratch container image
-            org.opencontainers.image.version=${{ needs.prepare.outputs.stalwart_ver }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push CLI platform image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -99,12 +106,8 @@ jobs:
           tags: |
             ${{ needs.prepare.outputs.image_base }}:cli-${{ needs.prepare.outputs.cli_ver }}${{ matrix.push_tag_suffix }}
           provenance: false
-          labels: |
-            org.opencontainers.image.title=Stalwart CLI
-            org.opencontainers.image.description=Stalwart CLI scratch container image
-            org.opencontainers.image.version=${{ needs.prepare.outputs.cli_ver }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   merge:
     name: Merge fat manifests
@@ -116,17 +119,18 @@ jobs:
       packages: write
 
     steps:
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Server multi-arch manifest
+        env:
+          BASE: ${{ needs.prepare.outputs.image_base }}
+          VER: ${{ needs.prepare.outputs.stalwart_ver }}
         run: |
-          BASE=${{ needs.prepare.outputs.image_base }}
-          VER=${{ needs.prepare.outputs.stalwart_ver }}
-
           docker buildx imagetools create \
             --tag "${BASE}:${VER}" \
             --tag "${BASE}:latest" \
@@ -134,10 +138,10 @@ jobs:
             "${BASE}:${VER}-arm64"
 
       - name: Create CLI multi-arch manifest
+        env:
+          BASE: ${{ needs.prepare.outputs.image_base }}
+          CLI_VER: ${{ needs.prepare.outputs.cli_ver }}
         run: |
-          BASE=${{ needs.prepare.outputs.image_base }}
-          CLI_VER=${{ needs.prepare.outputs.cli_ver }}
-
           docker buildx imagetools create \
             --tag "${BASE}:cli-${CLI_VER}" \
             --tag "${BASE}:cli-latest" \
