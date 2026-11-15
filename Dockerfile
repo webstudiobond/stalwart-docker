@@ -2,7 +2,7 @@ FROM ghcr.io/stalwartlabs/cli:1.0.14@sha256:5b70732cb69cdab3ff0894c501544cf0bfa1
 
 FROM ghcr.io/stalwartlabs/stalwart:v1.1.0-alpine@sha256:8988c12e4070b2d3b96b41478191df21d1a8a06702a249155815b1e497961526 AS stalwart-donor
 
-FROM golang:1.27.3-alpine3.24@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS go-builder
+FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS go-builder
 
 WORKDIR /build
 
