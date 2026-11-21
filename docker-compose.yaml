@@ -93,7 +93,7 @@ services:
         max-file: "3"
 
   stalwart:
-    image: ghcr.io/webstudiobond/stalwart-docker:${STALWART_VERSION:-latest}
+    image: ghcr.io/webstudiobond/stalwart:${STALWART_VERSION:-latest}
     container_name: stalwart-mail
     hostname: stalwart-mail
     restart: always
@@ -159,7 +159,7 @@ services:
         max-file: "3"
 
   stalwart-cli:
-    image: ghcr.io/webstudiobond/stalwart-docker:cli-${STALWART_CLI_VERSION:-latest}
+    image: ghcr.io/webstudiobond/stalwart:cli-${STALWART_CLI_VERSION:-latest}
     container_name: stalwart-cli
     profiles:
       - tools

@@ -1,7 +1,7 @@
 # Security Policy
 
 ## Supported Versions
-We currently provide security updates for the following versions of stalwart-docker:
+We currently provide security updates for the following versions of stalwart:
 
 | Version | Supported          |
 | ------- | ------------------ |

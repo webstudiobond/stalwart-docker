@@ -225,7 +225,7 @@ sudo docker run --rm -d \
   -v "/home/stalwart/secrets/stalwart_recovery_user.txt:/run/secrets/stalwart_recovery_user:ro" \
   -v "/home/stalwart/secrets/stalwart_recovery_password.txt:/run/secrets/stalwart_recovery_password:ro" \
   -p 127.0.0.1:18080:8080 \
-  ghcr.io/webstudiobond/stalwart-docker:latest
+  ghcr.io/webstudiobond/stalwart:latest
 
 sudo docker logs -f stalwart_bootstrap
 ```
